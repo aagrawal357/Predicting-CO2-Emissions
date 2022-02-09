@@ -1,0 +1,599 @@
+---
+title: "Analyzing/Predicting CO2 emissions by vehicles with different features"
+author: "Anurag _Agrawal"
+date: "NA"
+output:
+  html_document: default
+  pdf_document: default
+---
+###Loading required packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(car)
+library(glmnet)
+library(gglasso)
+library("heavy")
+library(MASS)
+library(leaps)
+library(CombMSC)
+library(boot)
+library(forcats)
+library(ggplot2)
+library(ggcorrplot)
+```
+
+### Loading data and data preprocessing
+```{r cars}
+# getwd()
+# setwd("<Please ensure that the Rmd file, training data and testing data are in the same folder and put that folder's path here in case you get an error while reading the data sets>")
+
+# Load the training data
+data <- read.csv("Training_dataset.csv", header = TRUE)
+# Peek at the data
+head(data,5)
+
+# Exclude make, model, transmission, and comb_mpg columns
+keep_columns <- c('year', 'manufacturer', 'drivetrain',  'vehicle_class', 'engine_size', 'cylinders', 'trans_type', 'num_gears', 'fuel_type', 'city', 'hwy', 'comb', 'co2')
+data_final <- data[,keep_columns]
+# Peek at the data
+head(data_final)
+
+# Convert categorical variables into factors
+data_final$manufacturer <- as.factor(data_final$manufacturer)
+data_final$drivetrain<- as.factor(data_final$drivetrain)
+data_final$vehicle_class <- as.factor(data_final$vehicle_class)
+data_final$trans_type <- as.factor(data_final$trans_type)
+data_final$num_gears <- as.factor(data_final$num_gears)
+data_final$fuel_type <- as.factor(data_final$fuel_type)
+
+# Peek at the data
+head(data_final)
+```
+###Exploratory Data Analysis (EDA)
+```{r}
+quantitative <- c('year', 'engine_size', 'cylinders', 'city', 'hwy', 'comb', 'co2')
+df_quant = data_final[quantitative]
+
+quantitative_predictors <- c('year', 'engine_size', 'cylinders', 'city', 'hwy', 'comb')
+
+cor(df_quant)
+plot(df_quant)
+
+boxplot(co2~manufacturer,data=data_final, xlab='Manufacturer', ylab='Emissions')
+boxplot(co2~drivetrain,data=data_final, xlab='Drivetrain', ylab='Emissions')
+boxplot(co2~vehicle_class,data=data_final, xlab='Vehicle Class', ylab='Emissions')
+boxplot(co2~trans_type,data=data_final, xlab='Transmission Type', ylab='Emissions')
+boxplot(co2~fuel_type,data=data_final, xlab='Fuel Type', ylab='Emissions')
+
+
+quantitative <- c('year', 'engine_size', 'cylinders', 'city', 'hwy', 'comb', 'co2')
+df_quant = data_final[quantitative]
+
+quantitative_predictors <- c('year', 'engine_size', 'cylinders', 'city', 'hwy', 'comb')
+
+Fuels <- c("Diesel(D)", "Ethanol(E)", "Regualr Gasoline (X)",'Premium Gasoline (Z)')
+ 
+ggplot(data=data_final, aes(x=co2,y=manufacturer, colour= manufacturer)) + geom_boxplot() + ylab("Manufacturer") + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 15))
+
+ggplot(data=data_final, aes(x=co2,y=drivetrain, colour= drivetrain)) + geom_boxplot() + ylab("Drivetrain") + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 20))
+
+ggplot(data=data_final, aes(x=co2,y=vehicle_class, colour= vehicle_class)) + geom_boxplot() + ylab("Vehicle Class") + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 10))
+
+ggplot(data=data_final, aes(x=co2,y=trans_type, colour= trans_type)) + geom_boxplot() + ylab("Transmission Type") + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 20))
+
+ggplot(data=data_final, aes(x=co2,y=fuel_type, colour= fuel_type)) + geom_boxplot() + ylab("Fuel Type")  + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 20))+ scale_y_discrete(labels= Fuels)
+
+ggplot(data=data_final, aes(x=co2,y=num_gears, colour= num_gears)) + geom_boxplot() + ylab("Number of Gears") + theme(legend.position="none") + xlab('Co2 Emission')+ theme(text = element_text(size = 20))
+
+df_quant %>% ggplot(aes(x = co2, y = comb)) +  geom_point(colour = 'green') +geom_smooth(method='lm', colour='Black') + xlab('Co2 Emission') + ylab('Combined Fuel Economy (Litres/100km)')+ theme(text = element_text(size = 15))
+
+df_quant %>% ggplot(aes(x = co2, y = city)) +  geom_point(colour = 'red') +geom_smooth(method='lm', colour='Black') + xlab('Co2 Emission') + ylab('City Fuel Economy (Litres/100km)')+ theme(text = element_text(size = 15))
+
+df_quant %>% ggplot(aes(x = co2, y = hwy)) +  geom_point(colour = 'blue') +geom_smooth(method='lm', colour='Black') + xlab('Co2 Emission') + ylab('Highway Fuel Economy (Litres/100km)')+ theme(text = element_text(size = 15))
+
+df_quant %>% ggplot(aes(x = co2, y = engine_size)) +  geom_point(colour = 'orange') +geom_smooth(method='lm', colour='Black') + xlab('Co2 Emission') + ylab('Engine Size')+ theme(text = element_text(size = 15))
+
+
+corr=cor(df_quant)
+ggcorrplot(corr, lab=TRUE, type= 'lower',ggtheme = ggplot2::theme_gray)
+```
+
+### Fitting initial model and checking for model assumptions
+```{r}
+# Fit an initial multiple linear regression model with all predictors
+model1 <- lm(co2~., data = data_final)
+summary(model1)
+
+###Checking Model Assumptions
+residmlr=rstandard(model1)
+ggplot(data=model1, aes(x=model1$fitted.values, y=model1$residuals)) + geom_point(colour = 'green')+ xlab('Fitted Values') + ylab('Residuals')+
+  geom_hline(yintercept=0)+theme(text = element_text(size = 20))
+
+ggplot(data = model1, aes(x = model1$residuals)) +
+    geom_histogram(fill = 'steelblue', color = 'black') +
+    labs(title = 'Histogram of Residuals', x = 'Residuals', y = 'Frequency')
+
+ggplot(data = model1, aes(sample = model1$residuals)) + stat_qq(colour='red') + stat_qq_line()+ ylab('Sample Quantiles') + xlab('Theoretical Quantiles')
+```
+### Preparing data for feature selection
+```{r}
+# Create a copy of the data which will hold scaled data
+data_final_new_copy <- data.table::copy(data_final)
+
+# Peek at the data
+head(data_final_new_copy)
+
+
+# Scale numerical factors
+data_final_new_copy$year <- scale(data_final_new_copy$year)
+data_final_new_copy$engine_size <- scale(data_final_new_copy$engine_size)
+data_final_new_copy$cylinders <- scale(data_final_new_copy$cylinders)
+data_final_new_copy$city <- scale(data_final_new_copy$city)
+data_final_new_copy$hwy <- scale(data_final_new_copy$hwy)
+data_final_new_copy$comb <- scale(data_final_new_copy$comb)
+
+# Peek at the scaled copy
+head(data_final_new_copy)
+
+# Not scaling the response so that we don't have to unscale while making predictions
+#data_final_new_copy$co2 <- scale(data_final_new_copy$co2)
+```
+
+### Variable/feature selection - Stepwise
+```{r}
+set.seed(100)
+
+# Create a minimum model with intercept
+min.model <- lm(co2~1, data = data_final)
+
+# Create the full model with all predictors - we can just reuse model1
+full.model <- model1
+
+c('Forward')
+
+# Perform stepwise regression - Forward
+forward.step.model <- step(min.model, scope = list(lower = min.model, upper = full.model), direction = "forward", trace = FALSE)
+summary(forward.step.model)
+c('Backward')
+
+# Perform stepwise regression - Backward
+backward.step.model <- step(full.model, scope = list(lower = min.model, upper = full.model), direction = "backward", trace = FALSE)
+summary(backward.step.model)
+c('Forward-Backward')
+
+# Perform stepwise regression - Forward - Backward
+forward.backward.step.model <- step(min.model, scope = list(lower = min.model, upper = full.model), direction = "both", trace = FALSE)
+summary(forward.backward.step.model)
+
+# All stepwise approaches gave us the same model and removed two categorical features drivetrain and trans_type. Let's check if that helped with multicollinearity and the goodness of fit
+
+vif(forward.backward.step.model)
+threshold <- max(10,1/(1-summary(forward.backward.step.model)$r.squared))
+cat("Threshold:",threshold, end='\n')
+
+# multicollinearity is still a problem.
+
+stdResiduals = rstandard(forward.backward.step.model)
+
+# Linearity assumption - Standardized residuals vs each quantitative predictor
+par(mfrow=c(2,2))
+num_cols <- c(1,5,6,11)
+for (col in num_cols){
+  current.col.name <- colnames(data_final)[col]
+  current.plot.title <- paste("Standardized Residuals vs", current.col.name)
+  plot(data_final[,col], stdResiduals, xlab=current.col.name, ylab = "Standardized Residuals", main=current.plot.title)
+abline(0,0,col="red")
+}
+# Independence and Constant variance assumptions - Fitted values against Standardized residuals
+fittedValues = forward.backward.step.model$fitted.values
+plot(fittedValues, stdResiduals, xlab="Fitted Values", ylab = "Standardized Residuals", main="Standardized Residuals vs Fitted Values")
+abline(0,0,col="red")
+
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+# Stepwise didn't help much so we'll explore other variable selection methods.
+
+```
+### Variable/feature selection - LASSO / ELASTICNET
+```{r}
+head(data_final_new_copy)
+# Lasso regression
+set.seed(100)
+cv.lasso <- cv.glmnet(model.matrix(~-1+., data_final_new_copy[,-13]), data_final_new_copy[,13], alpha = 1, nfolds = 10)
+
+lasso.model <- glmnet(model.matrix(~-1+., data_final_new_copy[,-13]), data_final_new_copy[,13], alpha = 1)
+plot(lasso.model, xvar = "lambda", label = TRUE, lwd =2)
+coef(lasso.model, cv.lasso$lambda.min)
+
+# Elastic net
+set.seed(100)
+cv.elnet <- cv.glmnet(model.matrix(~-1+., data_final_new_copy[,-13]), data_final_new_copy[,13], alpha = 0.5, nfolds = 10)
+
+elnet.model <- glmnet(model.matrix(~-1+., data_final_new_copy[,-13]), data_final_new_copy[,13], alpha = 0.5)
+plot(elnet.model, xvar = "lambda", label = TRUE, lwd =2)
+coef(elnet.model, cv.elnet$lambda.min)
+
+# Both lasso and elastic net removed some dummy variables of a few categorical variables but that's not useful because we can't remove the categorical variables, based on this information
+```
+
+### Variable selection - Alternate approach (Group Lasso)
+```{r}
+
+# glmnet lasso/elastic net is not useful for us since we have a mix of quantitative and categorical variables.
+# There's something called group lasso where we can group dummy variables (of categorical variables) so that they are all included/excluded together.
+# gglasso package and the library implements the group lasso
+
+# Create the design matrix of predictors
+predictors = model.matrix(~., data_final_new_copy[,1:ncol(data_final_new_copy)-1])
+predictors_wo_intercept <- predictors[,-1]
+response = data_final_new_copy$co2
+
+# define group index - group dummy variables for all our categorical variables
+group_manufacturer <- rep(2, 17)
+group_drivetrain <- rep(3, 2)
+group_vehicle_class <- rep(4, 15)
+group_trans_type <- rep(7, 2)
+group_num_gears <- rep(8, 7)
+group_fuel_type <- rep(9, 3)
+
+# create the final grouping that will be used by group lasso
+grouping <- c(1, group_manufacturer, group_drivetrain, group_vehicle_class, 5, 6, group_trans_type, group_num_gears, group_fuel_type, 10, 11, 12)
+#grouping
+
+# 5-fold cross validation using group lasso 
+cv.using.gglasso <- cv.gglasso(x=predictors_wo_intercept, y=response, group=grouping, loss="ls",
+pred.loss="L2", nfolds=5)
+plot(cv.using.gglasso)
+
+# Fit group lasso
+model.using.gglasso <- gglasso(x=predictors_wo_intercept, y=response, group=grouping, loss="ls")
+plot(model.using.gglasso, xvar = "lambda", label = TRUE, lwd =2)
+coef(model.using.gglasso, cv.using.gglasso$lambda.min)
+
+# Group lasso removed the num_gears categorical feature!!
+```
+
+### Refitting the model after feature selection
+
+```{r}
+# Train a model without num_gears (because group lasso tells us to remove it)
+gg.lasso.retrained <- lm(co2~.-num_gears, data = data_final)
+summary(gg.lasso.retrained)
+
+# Check for multicollinearity
+vif(gg.lasso.retrained)
+threshold <- max(10,1/(1-summary(gg.lasso.retrained)$r.squared))
+cat("Threshold:",threshold, end='\n')
+# multicollinearity is still a problem
+```
+### Feature selection - Custom approach - removing variables with highest gvif value, one at a time
+```{r}
+# Removing comb and training a model, since it has the highest gvif
+gg.lasso.retrained2 <- lm(co2~.-num_gears-comb, data = data_final)
+summary(gg.lasso.retrained2)
+
+# Check for multicollinearity
+vif(gg.lasso.retrained2)
+threshold <- max(10,1/(1-summary(gg.lasso.retrained2)$r.squared))
+cat("Threshold:",threshold, end='\n')
+# multicollinearity is not a problem anymore since everything is under the threshold
+
+# Let's check for model assumptions
+stdResiduals = rstandard(gg.lasso.retrained2)
+head(data_final)
+
+# Linearity assumption - Standardized residuals vs each quantitative predictor
+par(mfrow=c(3,2))
+num_cols <- c(1,5,6,10,11)
+for (col in num_cols){
+  current.col.name <- colnames(data_final)[col]
+  current.plot.title <- paste("Standardized Residuals vs", current.col.name)
+  plot(data_final[,col], stdResiduals, xlab=current.col.name, ylab = "Standardized Residuals", main=current.plot.title)
+abline(0,0,col="red")
+}
+
+# Independence and Constant variance assumptions - Fitted values against Standardized residuals
+fittedValues = gg.lasso.retrained2$fitted.values
+plot(fittedValues, stdResiduals, xlab="Fitted Values", ylab = "Standardized Residuals", main="Standardized Residuals vs Fitted Values")
+abline(0,0,col="red")
+
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+# Errors seem to be uncorrelated (Independence assumption holds true) but all other assumption such as Constant variance, linearity and normality don't.
+# Removing more variables, one at a time, based on the highest gvif value, to improve gvif values and the goodness of fit
+
+# Removing city
+gg.lasso.retrained3 <- lm(co2~.-num_gears-comb-city, data = data_final)
+summary(gg.lasso.retrained3)
+
+vif(gg.lasso.retrained3)
+threshold <- max(10,1/(1-summary(gg.lasso.retrained3)$r.squared))
+cat("Threshold:",threshold, end='\n')
+# multicollinearity is not a problem anymore since everything is under the threshold
+
+
+stdResiduals = rstandard(gg.lasso.retrained3)
+
+# Linearity assumption - Standardized residuals vs each quantitative predictor
+par(mfrow=c(2,2))
+num_cols <- c(1,5,6,11)
+for (col in num_cols){
+  current.col.name <- colnames(data_final)[col]
+  current.plot.title <- paste("Standardized Residuals vs", current.col.name)
+  plot(data_final[,col], stdResiduals, xlab=current.col.name, ylab = "Standardized Residuals", main=current.plot.title)
+abline(0,0,col="red")
+}
+# Independence and Constant variance assumptions - Fitted values against Standardized residuals
+fittedValues = gg.lasso.retrained3$fitted.values
+plot(fittedValues, stdResiduals, xlab="Fitted Values", ylab = "Standardized Residuals", main="Standardized Residuals vs Fitted Values")
+abline(0,0,col="red")
+
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+# Constant variance and linearity plots look slightly better but can further be improved. Normality is still a problem
+
+# Performing boxcox transformation of the response
+# bc <- boxcox(gg.lasso.retrained3)
+# lambda <- bc$x[which.max(bc$y)]
+# cat("lambda =>",lambda, end = '\n')
+
+# The lambda value close to 1 suggests no transformation but we still try common transformations to see if it helps with the normality assumption
+
+# trying log and sqrt transformations of the response to see if it fixes normality issue
+gg.lasso.retrained4 <- lm(log(co2)~.-num_gears-comb-city, data = data_final)
+summary(gg.lasso.retrained4)
+
+stdResiduals = rstandard(gg.lasso.retrained4)
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+gg.lasso.retrained5 <- lm(sqrt(co2)~.-num_gears-comb-city, data = data_final)
+summary(gg.lasso.retrained5)
+
+stdResiduals = rstandard(gg.lasso.retrained5)
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+# Both log and sqrt don't fix the normality issue
+
+# removing cylinders, based on the highest gvif value, to see if it further improves the gvif values and the goodness of fit
+
+gg.lasso.retrained6 <- lm(co2~.-num_gears-comb-city-cylinders, data = data_final)
+summary(gg.lasso.retrained6)
+vif(gg.lasso.retrained6)
+threshold <- max(10,1/(1-summary(gg.lasso.retrained6)$r.squared))
+cat("Threshold:",threshold, end='\n')
+# multicollinearity is not a problem anymore since everything is under the threshold
+
+stdResiduals = rstandard(gg.lasso.retrained6)
+
+# Linearity assumption - Standardized residuals vs each quantitative predictor
+par(mfrow=c(2,2))
+num_cols <- c(1,5,11)
+for (col in num_cols){
+  current.col.name <- colnames(data_final)[col]
+  current.plot.title <- paste("Standardized Residuals vs", current.col.name)
+  plot(data_final[,col], stdResiduals, xlab=current.col.name, ylab = "Standardized Residuals", main=current.plot.title)
+abline(0,0,col="red")
+}
+
+# Independence and Constant variance assumptions - Fitted values against Standardized residuals
+fittedValues = gg.lasso.retrained6$fitted.values
+plot(fittedValues, stdResiduals, xlab="Fitted Values", ylab = "Standardized Residuals", main="Standardized Residuals vs Fitted Values")
+abline(0,0,col="red")
+
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+# Residual plot and linearity look okay. Normality is still a problem.
+
+# removing hwy, based on the highest gvif value
+gg.lasso.retrained7 <- lm(co2~.-num_gears-comb-city-cylinders-hwy, data = data_final)
+summary(gg.lasso.retrained7)
+vif(gg.lasso.retrained7)
+threshold <- max(10,1/(1-summary(gg.lasso.retrained7)$r.squared))
+cat("Threshold:",threshold, end='\n')
+
+stdResiduals = rstandard(gg.lasso.retrained7)
+# Linearity assumption - Standardized residuals vs each quantitative predictor
+par(mfrow=c(1,2))
+num_cols <- c(1,5)
+for (col in num_cols){
+  current.col.name <- colnames(data_final)[col]
+  current.plot.title <- paste("Standardized Residuals vs", current.col.name)
+  plot(data_final[,col], stdResiduals, xlab=current.col.name, ylab = "Standardized Residuals", main=current.plot.title)
+abline(0,0,col="red")
+}
+
+# Independence and Constant variance assumptions - Fitted values against Standardized residuals
+fittedValues = gg.lasso.retrained7$fitted.values
+plot(fittedValues, stdResiduals, xlab="Fitted Values", ylab = "Standardized Residuals", main="Standardized Residuals vs Fitted Values")
+abline(0,0,col="red")
+
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+###Lasso7 Model Assumptions - prettier plots
+
+ggplot(data=gg.lasso.retrained7, aes(x=gg.lasso.retrained7$fitted.values, y=gg.lasso.retrained7$residuals)) + geom_point(colour = 'green')+ xlab('Fitted Values') + ylab('Residuals')+
+  geom_hline(yintercept=0)
+
+ggplot(data = gg.lasso.retrained7, aes(x = gg.lasso.retrained7$residuals)) +
+    geom_histogram(fill = 'steelblue', color = 'black') +
+    labs(title = 'Histogram of Residuals', x = 'Residuals', y = 'Frequency')
+
+ggplot(data = gg.lasso.retrained7, aes(sample = gg.lasso.retrained7$residuals)) + stat_qq(colour='red') + stat_qq_line()+ ylab('Sample Quantiles') + xlab('Theoretical Quantiles')
+
+# Residual plot and linearity look much better. We still have heavy-tails in the qq plot which means that error terms have distribution with heavier tails than normal
+```
+
+```{r}
+
+###OUTLIER CHECK
+cook = cooks.distance(gg.lasso.retrained7)
+plot(cook, type='h', lwd=3, col='darkred', ylab='Cooks Distance', main="Cooks Distance")
+
+which.max(cook)
+
+# Performing boxcox transformation of the response
+ bc <- boxcox(gg.lasso.retrained7)
+ opt.lambda3 = bc$x[which.max(bc$y)]
+ cat("Optimal lambda:", round(opt.lambda3/0.5)*0.5, end="\n")
+
+# The lambda value close to 0.5 suggests the sqrt() transformation of the response
+
+gg.lasso.retrained8 <- lm(sqrt(co2)~.-num_gears-comb-city-cylinders-hwy, data = data_final)
+summary(gg.lasso.retrained8)
+stdResiduals = rstandard(gg.lasso.retrained8)
+# Normality assumption - QQ plot and the histogram
+par(mfrow=c(1,2))
+hist(stdResiduals, xlab = "Standardized Residuals")
+
+qqPlot(stdResiduals, ylab = "Standardized Residuals")
+
+# The transformation didn't seem to help with the normal distribution of error terms and qqplot still has heavy tails.
+
+# At this point, we can go back to the gg.lasso.retrained7 model. R squared is 85.4%
+# There's no point in using gg.lasso.retrained8 because we'll need to unnecessarily undo the transformation while making predictions and this model doesn't add too much value on top of the model gg.lasso.retrained7
+
+# For the normality problem, we can use the heavyLm package.
+```
+
+
+```{r pressure, echo=FALSE}
+
+# Since error terms don't have a normal distribution in model#7/#9, we can use heavyLm() which fits a linear model using the T-distribution as the error distribution, which allows us to use an error distribution with heavier tails than the normal
+
+model10 <- heavyLm(co2~.-num_gears-comb-city-cylinders-hwy, data = data_final)
+summary(model10)
+```
+### Measure model's performance on the testing data
+```{r}
+# Load the test data
+test.data <- read.csv("Testing_dataset.csv", header = TRUE)
+tail(test.data,5)
+
+# Remove columns we don't need
+keep_columns <- c('year', 'manufacturer', 'drivetrain',  'vehicle_class', 'engine_size', 'trans_type', 'fuel_type', 'co2')
+test.data_final <- test.data[,keep_columns]
+head(test.data_final)
+
+###PREDICTION FOR GG.LASSO.RETRAINED7
+pred.model2a = predict(gg.lasso.retrained7, test.data, interval = 'prediction')
+
+## Save Predictions to compare with observed data
+test.pred1a = pred.model2a[,1]
+test.lwr1a = pred.model2a[,2]
+test.upr1a = pred.model2a[,3]
+
+# Mean Squared Prediction Error (MSPE)
+mean((test.pred1a-test.data$co2)^2) 
+
+# Mean Absolute Prediction Error (MAE)
+mean(abs(test.pred1a-test.data$co2)) 
+
+# Mean Absolute Percentage Error (MAPE)
+mean(abs(test.pred1a-test.data$co2)/test.data$co2) 
+
+# Precision Measure (PM)
+sum((test.pred1a-test.data$co2)^2)/sum((test.data$co2-mean(test.data$co2))^2) 
+
+# CI Measure (CIM)
+sum(test.data$co2<test.lwr1a | test.data$co2>test.upr1a) / nrow(test.data)
+
+
+
+# Since the generic predict function from the stats package cannot do predictions for a heavyLm model, we'll build our own prediction function
+
+# create the predict function for the heavyLm model
+predict.heavyLm = function(model,test.data){
+  # Create the design matrix of predictors from the test data
+  predictors = model.matrix(~., test.data[,1:ncol(test.data)-1])
+
+  # Extract the coefficients from the heavyLm model
+  coefs = model$coefficients
+  
+  # Pull out the names of predictors
+  xvars = names(coefs)
+  
+  # Make predictions using matrix multiplication
+  predictors[,xvars]%*%coefs           
+}
+
+# Make predictions on the test data using the above function
+pred.final <- predict.heavyLm(model10, test.data)
+# Since the heavyLm tries to minimize the sum of absolute values, we can use mean absolute prediction error (MAE) and mean absolute percentage error (MAPE) to evaluate its performance
+
+mae <- mean(abs(pred.final - test.data$co2))
+cat("Mean Absolute Prediction Error (MAE) =>", mae, end="\n")
+  
+mape <- mean(abs(pred.final - test.data$co2) / test.data$co2)
+cat("Mean Absolute Percentage Error (MAPE) =>", mape, end="\n")
+
+# This is slightly better than the model gg.lasso.retrained7 and it makes sense because we are taking into account the non-normal distribution of error terms. This is our final/recommended model.
+
+# Future work - It would be interesting to see how grouped elastic net would work in this case. There's no packaged implementation available for the same and it could be implemented by forming an optimization problem.
+```
+### Last step
+```{r}
+# As an additional step, we would like to test one more thing. Recall that stepwise suggested us to remove two categorical features drivetrain and trans_type. They are in our final recommended model. We'll conduct a partial F-test to see if they should stay in the recommended model.
+
+# Since the sample size is large (>10k), p-values can get small for no reason and we need to subsample the data many times and run the partial F-test multiple times. 
+set.seed(1000)
+count = 1
+n = nrow(data_final)
+B = 100
+
+# This vector will store p-values for all runs
+pvalues.vector<- integer(100)
+
+while(count <= B){
+subsample <- sample(n, floor(n*0.4), replace = FALSE)
+subdata <- data_final[subsample,]
+if (length(unique(subdata$manufacturer)) != 18){
+  next
+}
+else if(length(unique(subdata$vehicle_class)) != 16){
+  next
+}
+else{
+  submodel1 <- lm(co2~.-num_gears-comb-city-cylinders-hwy-drivetrain-trans_type, data = subdata)
+  submodel2 <- lm(co2~.-num_gears-comb-city-cylinders-hwy, data = subdata)
+  anova.test <- anova(submodel1, submodel2)
+  # Rounding off p-values to 4 places after the decimal
+  pvalues.vector[count] = round(anova.test$`Pr(>F)`[2], 4)
+}
+count = count+1
+}
+
+cat("p-values for all runs => \n", pvalues.vector)
+
+# Since the p-values are close to zero each time, we can conclude that we should keep drivetrain and trans_type in the model 
+```
+
+
